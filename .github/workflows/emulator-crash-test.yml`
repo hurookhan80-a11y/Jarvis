@@ -1,0 +1,80 @@
+# Emulator crash test — runs both 32-bit APKs on an Android emulator and
+# captures the crash logcat. Both APKs install but crash instantly with no UI
+# on a real 32-bit phone; the logcat is the only way to see the real cause.
+# Trigger: Actions tab -> "Emulator crash test" -> Run workflow.
+# NOTE: the APK download links below are temporary (they expire
+# Wed 18 Nov 2026, ~16:30 PKT). Run this workflow before then. After that,
+# attach the APKs to a GitHub Release and update the two URLs here.
+name: Emulator crash test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  crash-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Download APKs
+        run: |
+          set -e
+          curl -L -o jarvis.apk "https://muse.ai/files/1301494943057827/1523601569590629/9vsnq6yk9t5hsmn7j6p9owf6/jarvis-32bit-armeabi-v7a.apk"
+          curl -L -o testapp.apk "https://muse.ai/files/1301494943057827/2525457907865077/18kjai2oqntcm9itg5gvejk7/jarvis-test-minimal.apk"
+          ls -la *.apk
+          file *.apk
+          test $(stat -c%s jarvis.apk) -gt 10000000
+          test $(stat -c%s testapp.apk) -gt 10000000
+          echo "Both APKs downloaded OK"
+
+      - name: Run both APKs on the emulator and capture logcat
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          emulator-boot-timeout: 600
+          disable-animations: true
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          script: |
+            set -x
+            adb logcat -c
+            echo "=== Installing test app ==="
+            adb install -r testapp.apk
+            adb shell pm list packages | grep jarvis || echo "testapp NOT installed"
+            echo "=== Launching test app ==="
+            adb shell am start -n com.jarvis.testapp/.MainActivity
+            sleep 20
+            echo "=== test app process (empty = crashed) ==="
+            adb shell pidof com.jarvis.testapp || echo "testapp process NOT running"
+            adb logcat -d > testapp-logcat.txt
+            echo "=== testapp logcat lines: $(wc -l < testapp-logcat.txt) ==="
+            grep -iE "FATAL|AndroidRuntime|jarvis.testapp" testapp-logcat.txt | head -50 || true
+            adb logcat -c
+            echo "=== Installing Jarvis app ==="
+            adb install -r jarvis.apk
+            adb shell pm list packages | grep jarvis || echo "jarvis NOT installed"
+            echo "=== Launching Jarvis app ==="
+            adb shell am start -n com.jarvis.jarvis_app/.MainActivity
+            sleep 20
+            echo "=== jarvis process (empty = crashed) ==="
+            adb shell pidof com.jarvis.jarvis_app || echo "jarvis process NOT running"
+            adb logcat -d > jarvis-logcat.txt
+            echo "=== jarvis logcat lines: $(wc -l < jarvis-logcat.txt) ==="
+            grep -iE "FATAL|AndroidRuntime|jarvis_app" jarvis-logcat.txt | head -50 || true
+            ls -la *-logcat.txt
+
+      - name: Upload logcat artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-logcats
+          path: |
+            testapp-logcat.txt
+            jarvis-logcat.txt
+          retention-days: 7
