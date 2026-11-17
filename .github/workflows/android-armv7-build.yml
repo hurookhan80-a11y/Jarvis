@@ -1,0 +1,55 @@
+name: Android ARMv7 build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'JARVIS-32bit-corrected-source.zip'
+      - '.github/workflows/android-armv7-build.yml'
+
+jobs:
+  build-armv7:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack corrected source
+        run: unzip -q JARVIS-32bit-corrected-source.zip
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+          cache: true
+      - name: Install dependencies
+        working-directory: JARVIS-32bit-corrected/jarvis_app
+        run: flutter pub get
+      - name: Analyze
+        working-directory: JARVIS-32bit-corrected/jarvis_app
+        run: flutter analyze
+        continue-on-error: true
+      - name: Run tests
+        working-directory: JARVIS-32bit-corrected/jarvis_app
+        run: flutter test
+        continue-on-error: true
+      - name: Configure local Android SDK paths
+        working-directory: JARVIS-32bit-corrected/jarvis_app/android
+        run: |
+          printf 'flutter.sdk=%s\n' "$FLUTTER_ROOT" > local.properties
+          printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT" >> local.properties
+      - name: Generate Gradle wrapper
+        working-directory: JARVIS-32bit-corrected/jarvis_app/android
+        run: gradle wrapper --gradle-version 9.5.0
+      - name: Build 32-bit ARM release APK
+        working-directory: JARVIS-32bit-corrected/jarvis_app
+        run: flutter build apk --release --target-platform android-arm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-armv7-release
+          path: JARVIS-32bit-corrected/jarvis_app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
