@@ -39,12 +39,23 @@ jobs:
         # Signs the release APK with the real keystore when the secrets are
         # set (v1.1.0). Without them the build falls back to the debug
         # signing key, exactly as v1.0.8 did. Secrets are never echoed.
-        if: ${{ secrets.JARVIS_RELEASE_KEYSTORE_B64 != '' }}
+        # NOTE: `secrets` may NOT appear in an `if:` expression — GitHub
+        # rejects the whole workflow file at parse time ("Unrecognized
+        # named-value: 'secrets'"). The empty-secret check therefore lives
+        # inside the script, via env vars. The heredoc is quoted ('EOF')
+        # so password characters are written verbatim.
         env:
           JARVIS_RELEASE_KEYSTORE_B64: ${{ secrets.JARVIS_RELEASE_KEYSTORE_B64 }}
+          JARVIS_RELEASE_STORE_PASSWORD: ${{ secrets.JARVIS_RELEASE_STORE_PASSWORD }}
+          JARVIS_RELEASE_KEY_ALIAS: ${{ secrets.JARVIS_RELEASE_KEY_ALIAS }}
+          JARVIS_RELEASE_KEY_PASSWORD: ${{ secrets.JARVIS_RELEASE_KEY_PASSWORD }}
         run: |
+          if [ -z "$JARVIS_RELEASE_KEYSTORE_B64" ]; then
+            echo "No release keystore secret set; using debug signing."
+            exit 0
+          fi
           echo "$JARVIS_RELEASE_KEYSTORE_B64" | base64 -d > JARVIS-32bit-corrected/jarvis_app/android/app/keystore.jks
-          cat > JARVIS-32bit-corrected/jarvis_app/android/key.properties <<EOF
+          cat > JARVIS-32bit-corrected/jarvis_app/android/key.properties <<'EOF'
           storeFile=keystore.jks
           storePassword=${{ secrets.JARVIS_RELEASE_STORE_PASSWORD }}
           keyAlias=${{ secrets.JARVIS_RELEASE_KEY_ALIAS }}
