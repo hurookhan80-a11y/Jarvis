@@ -1,0 +1,86 @@
+name: Release APK
+
+# Builds the signed release APK and publishes it as a GitHub Release
+# whenever a version tag (v1.1.0, v1.2.0, ...) is pushed.
+# The release keystore secrets must be set first (see README.md):
+#   JARVIS_RELEASE_KEYSTORE_B64, JARVIS_RELEASE_STORE_PASSWORD,
+#   JARVIS_RELEASE_KEY_ALIAS, JARVIS_RELEASE_KEY_PASSWORD
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack corrected source
+        run: unzip -q JARVIS-32bit-corrected-source.zip
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+          cache: true
+      - name: Check release secrets
+        run: |
+          missing=0
+          for name in JARVIS_RELEASE_KEYSTORE_B64 JARVIS_RELEASE_STORE_PASSWORD JARVIS_RELEASE_KEY_ALIAS JARVIS_RELEASE_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then echo "Missing secret: $name"; missing=1; fi
+          done
+          if [ "$missing" = 1 ]; then exit 1; fi
+        env:
+          JARVIS_RELEASE_KEYSTORE_B64: ${{ secrets.JARVIS_RELEASE_KEYSTORE_B64 }}
+          JARVIS_RELEASE_STORE_PASSWORD: ${{ secrets.JARVIS_RELEASE_STORE_PASSWORD }}
+          JARVIS_RELEASE_KEY_ALIAS: ${{ secrets.JARVIS_RELEASE_KEY_ALIAS }}
+          JARVIS_RELEASE_KEY_PASSWORD: ${{ secrets.JARVIS_RELEASE_KEY_PASSWORD }}
+      - name: Install dependencies
+        working-directory: JARVIS-32bit-corrected/jarvis_app
+        run: flutter pub get
+      - name: Analyze
+        working-directory: JARVIS-32bit-corrected/jarvis_app
+        run: flutter analyze
+      - name: Run tests
+        working-directory: JARVIS-32bit-corrected/jarvis_app
+        run: flutter test
+      - name: Decode release keystore
+        env:
+          JARVIS_RELEASE_KEYSTORE_B64: ${{ secrets.JARVIS_RELEASE_KEYSTORE_B64 }}
+        run: |
+          echo "$JARVIS_RELEASE_KEYSTORE_B64" | base64 -d > JARVIS-32bit-corrected/jarvis_app/android/app/keystore.jks
+          cat > JARVIS-32bit-corrected/jarvis_app/android/key.properties <<EOF
+          storeFile=keystore.jks
+          storePassword=${{ secrets.JARVIS_RELEASE_STORE_PASSWORD }}
+          keyAlias=${{ secrets.JARVIS_RELEASE_KEY_ALIAS }}
+          keyPassword=${{ secrets.JARVIS_RELEASE_KEY_PASSWORD }}
+          EOF
+      - name: Configure local Android SDK paths
+        working-directory: JARVIS-32bit-corrected/jarvis_app/android
+        run: |
+          printf 'flutter.sdk=%s\n' "$FLUTTER_ROOT" > local.properties
+          printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT" >> local.properties
+      - name: Generate Gradle wrapper
+        working-directory: JARVIS-32bit-corrected/jarvis_app/android
+        run: gradle wrapper --gradle-version 9.5.0
+      - name: Build 32-bit ARM release APK
+        working-directory: JARVIS-32bit-corrected/jarvis_app
+        run: flutter build apk --release --target-platform android-arm
+      - name: Rename APK for the release
+        run: |
+          cp JARVIS-32bit-corrected/jarvis_app/build/app/outputs/flutter-apk/app-release.apk "jarvis-armv7-${GITHUB_REF_NAME}.apk"
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: jarvis-armv7-${{ github.ref_name }}.apk
+          generate_release_notes: true
